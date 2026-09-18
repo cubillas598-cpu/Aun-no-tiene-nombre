@@ -55,6 +55,9 @@ from domain.inertia import (FORMAS, inercia_cilindro, inercia_esfera, inercia_pr
 from ui.state import (a_interno, a_pantalla, iniciar_estado, latex_matriz, n_fmt, ss,
                       uni, unidad_junta, unidad_par, _cargar)
 from ui.figures import figura_curvas, figura_robot
+from ui.components import dice, encabezado, pista, tabla
+from ui.tabs.empezar import tab_empezar
+from ui.tabs.directa import tab_directa
 
 
 # ==============================================================================
@@ -197,25 +200,6 @@ DIAGRAMA_DH = """
 """
 
 
-def dice(texto: str) -> None:
-    st.markdown(f'<div class="dice">{texto}</div>', unsafe_allow_html=True)
-
-
-def pista(texto: str) -> None:
-    if ss().explicar:
-        st.markdown(f'<div class="pista">{texto}</div>', unsafe_allow_html=True)
-
-
-def encabezado(pregunta: str, respuesta: str = "") -> None:
-    st.markdown(f"### {pregunta}")
-    if respuesta:
-        st.markdown(f'<p class="mini">{respuesta}</p>', unsafe_allow_html=True)
-
-
-def tabla(df: pd.DataFrame) -> None:
-    st.dataframe(df, hide_index=True, **A_TABLA)
-
-
 def poner_q(q_nuevo: Sequence[float]) -> None:
     """Cambia la postura y fuerza a que los deslizadores se redibujen."""
     ss().q = np.asarray(q_nuevo, float)
@@ -333,112 +317,6 @@ def encabezado_principal() -> None:
         if tope:
             st.warning(f"El eje {', '.join(map(str, tope))} está en su tope mecánico: "
                        f"no puede seguir en esa dirección.", icon="⚠️")
-
-
-# ============================== PESTAÑA: EMPEZAR ==============================
-def tab_empezar() -> None:
-    st.markdown("### Bienvenido")
-    st.markdown(
-        '<p class="mini">Esto es una calculadora para el curso de cinemática y dinámica de robots. '
-        'Sirve para resolver tareas y, sobre todo, para ver qué significan las cuentas.</p>',
-        unsafe_allow_html=True)
-    pasos = [
-        ("1", "Elige un robot", "En la barra de la izquierda hay seis robots típicos ya cargados. "
-                                "Si tu tarea trae otro, ve a la pestaña <b>Editar mi robot</b> y escribe su tabla."),
-        ("2", "Muévelo", "Los deslizadores cambian cada articulación. El dibujo en 3D y todos los "
-                         "resultados se actualizan al instante."),
-        ("3", "Abre la pestaña con tu pregunta", "No hay que apretar “calcular”: todo se recalcula solo."),
-    ]
-    for num, titulo, texto in pasos:
-        st.markdown(f'<div class="paso"><div class="num">{num}</div>'
-                    f'<div class="txt"><b>{titulo}</b><span class="mini">{texto}</span></div></div>',
-                    unsafe_allow_html=True)
-
-    st.divider()
-    izq, der = st.columns([1, 1], gap="large")
-    with izq:
-        st.markdown("#### ¿Qué pestaña necesito?")
-        guia = pd.DataFrame({
-            "Si tu pregunta es…": [
-                "¿Dónde queda la mano con estos ángulos?",
-                "¿Qué ángulos necesito para llegar a este punto?",
-                "¿Qué tan rápido se mueve la mano? ¿Estoy en una singularidad?",
-                "¿De cuántos N·m tienen que ser mis motores?",
-                "¿Cómo hago que se mueva suave de A a B?",
-                "Solo quiero convertir entre ángulos y matrices",
-                "Necesito capturar el robot de mi tarea",
-            ],
-            "Ve a": ["Posición de la mano", "Llegar a un punto", "Velocidad y singularidades",
-                     "Motores y pares", "Movimiento suave", "Rotaciones", "Editar mi robot"]})
-        tabla(guia)
-    with der:
-        st.markdown("#### Los cuatro números de cada eslabón")
-        st.markdown(DIAGRAMA_DH, unsafe_allow_html=True)
-
-    st.markdown("""
-Cada renglón de la tabla de un robot dice cómo llegar del eslabón anterior al siguiente con
-cuatro movimientos, siempre en el mismo orden:
-
-- **θ (theta)** — cuánto giras alrededor del eje viejo. Si la articulación **gira**, éste es el número que mueve el motor.
-- **d** — cuánto avanzas a lo largo del eje viejo. Si la articulación **desliza**, éste es el que mueve el actuador.
-- **a** — qué tan largo es el eslabón. Siempre es constante.
-- **α (alfa)** — cuánto se inclina el eje siguiente respecto al anterior. Casi siempre vale 0 o ±90°: dice si el
-  siguiente eje queda paralelo o perpendicular.
-""")
-    pista("<b>Truco:</b> si eres nuevo, empieza con el <b>brazo plano de 2 eslabones</b>. "
-          "Tiene solo dos motores, se ve completo en el dibujo y sus fórmulas se pueden verificar a mano.")
-
-
-# ======================== PESTAÑA: CINEMATICA DIRECTA ========================
-def tab_directa() -> None:
-    rob: Robot = ss().robot
-    q = ss().q
-    Ts = rob.cadena(q)
-    T = Ts[-1]
-    p = T[:3, 3]
-    encabezado("¿Dónde está la mano?",
-               "Le das los ángulos de cada motor y te dice en qué punto del espacio queda el extremo.")
-    dice(f"Con la postura de ahora, la mano está en <b>x = {p[0]:.3f} m</b>, "
-         f"<b>y = {p[1]:.3f} m</b>, <b>z = {p[2]:.3f} m</b>. "
-         f"Todo eso está guardado en una sola matriz de 4×4.")
-    pista("Se multiplica una matriz por eslabón: <b>T = A₁·A₂·…·Aₙ</b>. En el resultado, la última columna "
-          "es la <b>posición</b> de la mano y el bloque de 3×3 de la izquierda es su <b>orientación</b>, "
-          "o sea hacia dónde apunta.")
-
-    izq, der = st.columns([1, 1], gap="large")
-    with izq:
-        st.markdown("**La matriz que lo resume todo**")
-        st.latex(latex_matriz(T, "T", 3))
-    with der:
-        st.markdown("**La misma orientación, escrita de todas las formas**")
-        roll, pitch, yaw = rpy_desde_R(T[:3, :3])
-        phi, tht, psi = zyz_desde_R(T[:3, :3])
-        eje, ang = eje_angulo_desde_R(T[:3, :3])
-        cu = cuaternion_desde_R(T[:3, :3])
-        tabla(pd.DataFrame({
-            "Forma": ["Posición [m]", f"RPY fijos ZYX [{uni()}]", f"Euler ZYZ [{uni()}]",
-                      f"Eje y ángulo [{uni()}]", "Cuaternión"],
-            "Valores": [
-                f"x {n_fmt(p[0])}   y {n_fmt(p[1])}   z {n_fmt(p[2])}",
-                f"{n_fmt(a_pantalla(roll), 2)}   {n_fmt(a_pantalla(pitch), 2)}   {n_fmt(a_pantalla(yaw), 2)}",
-                f"{n_fmt(a_pantalla(phi), 2)}   {n_fmt(a_pantalla(tht), 2)}   {n_fmt(a_pantalla(psi), 2)}",
-                f"eje ({', '.join(n_fmt(v, 2) for v in eje)})   ángulo {n_fmt(a_pantalla(ang), 2)}",
-                "   ".join(n_fmt(v) for v in cu)]}))
-
-    with st.expander("Ver el procedimiento eslabón por eslabón (para copiar a la tarea)"):
-        for i, e in enumerate(rob.eslabones):
-            th = e.theta + q[i] if e.es_rotacion else e.theta
-            dd = e.d if e.es_rotacion else e.d + q[i]
-            extra = " (el desplazamiento fijo más q)" if (e.es_rotacion and e.theta) else (" = q" if e.es_rotacion else "")
-            st.markdown(f"**Eslabón {i + 1}** · θ = {n_fmt(a_pantalla(th), 2)}{uni()}{extra} · "
-                        f"d = {n_fmt(dd)} m · a = {n_fmt(e.a)} m · α = {n_fmt(a_pantalla(e.alpha), 2)}{uni()}")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.latex(latex_matriz(e.matriz(float(q[i])), f"A_{{{i + 1}}}", 3))
-            with c2:
-                st.latex(latex_matriz(Ts[i + 1], f"T^0_{{{i + 1}}}", 3))
-        st.code("\n".join(" ".join(f"{v:10.5f}" for v in fila) for fila in T),
-                language=None)
 
 
 # ======================== PESTAÑA: CINEMATICA INVERSA ========================
@@ -1153,7 +1031,7 @@ def main() -> None:
                         "⚡  Velocidad y singularidades", "💪  Motores y pares",
                         "🎬  Movimiento suave", "🧭  Rotaciones", "🛠️  Editar mi robot"])
     with pestañas[0]:
-        tab_empezar()
+        tab_empezar(DIAGRAMA_DH)
     with pestañas[1]:
         tab_directa()
     with pestañas[2]:
