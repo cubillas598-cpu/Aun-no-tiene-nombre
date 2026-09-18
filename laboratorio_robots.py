@@ -30,7 +30,7 @@ import os
 import re
 import sys
 import hashlib
-from typing import Callable, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -49,96 +49,9 @@ from domain.rotations import (R_desde_cuaternion, R_desde_eje_angulo, R_desde_rp
 from domain.robot import Eslabon, Robot
 from domain.catalog import catalogo
 from domain.inverse import inversa_2R, inversa_3R_plano, inversa_antropomorfico
-
-
-# -------------------------------------------------------------- trayectorias
-def cubica(q0, qf, v0, vf, tf) -> Callable[[float], np.ndarray]:
-    """Velocidad continua. Es el perfil mas sencillo que sirve de verdad."""
-    a0, a1 = q0, v0
-    a2 = (3 * (qf - q0) - (2 * v0 + vf) * tf) / tf ** 2
-    a3 = (2 * (q0 - qf) + (v0 + vf) * tf) / tf ** 3
-
-    def f(t):
-        return np.array([a0 + a1 * t + a2 * t ** 2 + a3 * t ** 3,
-                         a1 + 2 * a2 * t + 3 * a3 * t ** 2,
-                         2 * a2 + 6 * a3 * t])
-    return f
-
-
-def quintica(q0, qf, v0, vf, ac0, acf, tf) -> Callable[[float], np.ndarray]:
-    """Arranca y termina con aceleracion cero: lo mas suave para la mecanica."""
-    d, T = qf - q0, tf
-    a0, a1, a2 = q0, v0, ac0 / 2
-    a3 = (20 * d - (8 * vf + 12 * v0) * T - (3 * ac0 - acf) * T ** 2) / (2 * T ** 3)
-    a4 = (-30 * d + (14 * vf + 16 * v0) * T + (3 * ac0 - 2 * acf) * T ** 2) / (2 * T ** 4)
-    a5 = (12 * d - 6 * (vf + v0) * T + (acf - ac0) * T ** 2) / (2 * T ** 5)
-
-    def f(t):
-        return np.array([a0 + a1 * t + a2 * t ** 2 + a3 * t ** 3 + a4 * t ** 4 + a5 * t ** 5,
-                         a1 + 2 * a2 * t + 3 * a3 * t ** 2 + 4 * a4 * t ** 3 + 5 * a5 * t ** 4,
-                         2 * a2 + 6 * a3 * t + 12 * a4 * t ** 2 + 20 * a5 * t ** 3])
-    return f
-
-
-def trapezoidal(q0, qf, tf, aceleracion) -> Callable[[float], np.ndarray]:
-    """Acelera, viaja a velocidad constante y frena. Es el perfil industrial."""
-    d = qf - q0
-    D = abs(d)
-    signo = math.copysign(1.0, d) if d else 1.0
-    if D < 1e-12:
-        f = lambda t: np.array([q0, 0.0, 0.0])                     # noqa: E731
-        f.tc, f.v_crucero, f.aceleracion, f.insuficiente = 0.0, 0.0, 0.0, False
-        return f
-    minima = 4 * D / tf ** 2
-    insuficiente = aceleracion < minima
-    a = max(aceleracion, minima * 1.0000001)
-    tc = tf / 2 - math.sqrt(max(a * a * tf * tf - 4 * a * D, 0.0)) / (2 * a)
-    vc = a * tc
-
-    def f(t):
-        t = min(max(t, 0.0), tf)
-        if t <= tc:
-            return np.array([q0 + signo * 0.5 * a * t * t, signo * a * t, signo * a])
-        if t <= tf - tc:
-            return np.array([q0 + signo * vc * (t - tc / 2), signo * vc, 0.0])
-        u = tf - t
-        return np.array([qf - signo * 0.5 * a * u * u, signo * a * u, -signo * a])
-
-    f.tc, f.v_crucero, f.aceleracion, f.insuficiente = tc, signo * vc, signo * a, insuficiente
-    return f
-
-
-# ------------------------------------------------- tensores de inercia utiles
-def inercia_varilla(m, L):
-    """Varilla delgada con su eje largo sobre x."""
-    return np.diag([0.0, m * L ** 2 / 12, m * L ** 2 / 12])
-
-
-def inercia_cilindro(m, r, L):
-    """Cilindro con su eje sobre x."""
-    return np.diag([m * r ** 2 / 2, m * (3 * r ** 2 + L ** 2) / 12, m * (3 * r ** 2 + L ** 2) / 12])
-
-
-def inercia_prisma(m, a, b, c):
-    return np.diag([m * (b ** 2 + c ** 2) / 12, m * (a ** 2 + c ** 2) / 12, m * (a ** 2 + b ** 2) / 12])
-
-
-def inercia_esfera(m, r):
-    return np.diag([2 * m * r ** 2 / 5] * 3)
-
-
-FORMAS = {
-    "Varilla delgada (eje en x)": (inercia_varilla, ["largo L [m]"]),
-    "Cilindro (eje en x)": (inercia_cilindro, ["radio r [m]", "largo L [m]"]),
-    "Prisma rectangular": (inercia_prisma, ["lado a [m]", "lado b [m]", "lado c [m]"]),
-    "Esfera maciza": (inercia_esfera, ["radio r [m]"]),
-}
-
-
-def steiner(I: np.ndarray, m: float, d: Sequence[float]) -> np.ndarray:
-    """Teorema de los ejes paralelos: traslada el tensor a otro punto."""
-    d = np.asarray(d, float)
-    return I + m * (float(d @ d) * np.eye(3) - np.outer(d, d))
+from domain.trajectories import cubica, quintica, trapezoidal
+from domain.inertia import (FORMAS, inercia_cilindro, inercia_esfera, inercia_prisma,
+                             inercia_varilla, steiner)
 
 
 # ==============================================================================

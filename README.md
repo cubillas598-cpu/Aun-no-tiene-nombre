@@ -2,10 +2,10 @@
 
 Aplicacion educativa para estudiar cinematica y dinamica de robots mediante una interfaz interactiva.
 
-El nucleo de rotaciones y el modelo del robot estan separados en `domain/rotations.py` y
-`domain/robot.py` para poder probarlos sin depender de la interfaz Streamlit. La aplicacion
-principal sigue siendo `laboratorio_robots.py` mientras se completa la migracion gradual del resto
-del dominio.
+El nucleo matematico esta separado en `domain/rotations.py`, `domain/robot.py`,
+`domain/catalog.py`, `domain/inverse.py`, `domain/trajectories.py` y `domain/inertia.py`.
+Estos modulos se pueden probar sin depender de la interfaz Streamlit. La aplicacion principal
+sigue siendo `laboratorio_robots.py` mientras se completa la migracion gradual del dominio.
 
 ## Instalacion
 
