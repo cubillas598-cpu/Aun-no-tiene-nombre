@@ -58,6 +58,7 @@ from ui.figures import figura_curvas, figura_robot
 from ui.components import dice, encabezado, pista, tabla
 from ui.tabs.empezar import tab_empezar
 from ui.tabs.directa import tab_directa
+from ui.tabs.inversa import tab_inversa as tab_inversa_modular
 
 
 # ==============================================================================
@@ -320,7 +321,7 @@ def encabezado_principal() -> None:
 
 
 # ======================== PESTAÑA: CINEMATICA INVERSA ========================
-def tab_inversa() -> None:
+def _tab_inversa_legacy() -> None:
     rob: Robot = ss().robot
     q = ss().q
     encabezado("¿Qué ángulos necesito para llegar a un punto?",
@@ -1035,7 +1036,7 @@ def main() -> None:
     with pestañas[1]:
         tab_directa()
     with pestañas[2]:
-        tab_inversa()
+        tab_inversa_modular(poner_q, vector_entrada)
     with pestañas[3]:
         tab_jacobiano()
     with pestañas[4]:
