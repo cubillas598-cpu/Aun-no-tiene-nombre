@@ -20,6 +20,13 @@ Tambien puedes revisar las dependencias y las cuentas internas con:
 python laboratorio_robots.py --revisar
 ```
 
+Para ejecutar las pruebas preventivas:
+
+```powershell
+pip install -r requirements-dev.txt
+pytest -q
+```
+
 ## Alcance y seguridad
 
 El programa es una simulacion educativa. Los resultados dependen de que la tabla DH, las masas,

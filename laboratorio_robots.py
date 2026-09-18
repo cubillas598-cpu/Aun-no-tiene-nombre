@@ -29,6 +29,7 @@ import math
 import os
 import re
 import sys
+import hashlib
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
@@ -251,6 +252,16 @@ class Robot:
                 errores.append(prefijo + "el centro de masa debe tener tres valores finitos.")
             if inercia.shape != (3, 3) or not np.all(np.isfinite(inercia)):
                 errores.append(prefijo + "la inercia debe ser una matriz 3x3 finita.")
+            elif not np.allclose(inercia, inercia.T, atol=1e-9):
+                errores.append(prefijo + "la inercia debe ser simetrica.")
+            elif np.min(np.linalg.eigvalsh(inercia)) < -1e-9:
+                errores.append(prefijo + "la inercia debe ser semidefinida positiva.")
+        if self.herramienta is not None:
+            herramienta = np.asarray(self.herramienta, float)
+            if herramienta.shape != (4, 4) or not np.all(np.isfinite(herramienta)):
+                errores.append("La herramienta debe ser una matriz 4x4 finita.")
+            elif not np.allclose(herramienta[3], [0.0, 0.0, 0.0, 1.0], atol=1e-9):
+                errores.append("La ultima fila de la herramienta debe ser [0, 0, 0, 1].")
         return errores
 
     def q_inicial(self) -> np.ndarray:
@@ -259,6 +270,9 @@ class Robot:
     # --------------------------------------------------- cinematica directa
     def cadena(self, q: Sequence[float]) -> list[np.ndarray]:
         """[T0_0=I, T0_1, ..., T0_n] con la herramienta ya incluida al final."""
+        q = np.asarray(q, float)
+        if q.shape != (self.n,) or not np.all(np.isfinite(q)):
+            raise ValueError(f"Se esperaban {self.n} variables articulares finitas.")
         Ts = [np.eye(4)]
         for e, qi in zip(self.eslabones, q):
             Ts.append(Ts[-1] @ e.matriz(float(qi)))
@@ -352,6 +366,12 @@ class Robot:
         q = np.asarray(q, float)
         qd = np.asarray(qd, float)
         qdd = np.asarray(qdd, float)
+        if any(v.shape != (n,) or not np.all(np.isfinite(v)) for v in (q, qd, qdd)):
+            raise ValueError(f"q, qd y qdd deben tener {n} valores finitos.")
+        if carga is not None:
+            carga = np.asarray(carga, float)
+            if carga.shape != (6,) or not np.all(np.isfinite(carga)):
+                raise ValueError("La carga debe tener seis valores finitos.")
         z0 = np.array([0.0, 0.0, 1.0])
 
         A = [e.matriz(float(q[i])) for i, e in enumerate(self.eslabones)]
@@ -1562,7 +1582,9 @@ def tab_trayectorias() -> None:
         "Eje": [f"{i + 1}" for i in range(n)],
         "Empieza en": [round(a_pantalla(q[i]) if e.es_rotacion else q[i], 3)
                        for i, e in enumerate(rob.eslabones)],
-        "Termina en": [round((a_pantalla(q[i]) + 30) if e.es_rotacion else q[i] + 0.1, 3)
+        "Termina en": [round(a_pantalla(np.clip(q[i] + (rad(30) if e.es_rotacion else 0.1),
+                                            e.qmin, e.qmax)) if e.es_rotacion else
+                       np.clip(q[i] + 0.1, e.qmin, e.qmax), 3)
                        for i, e in enumerate(rob.eslabones)],
         "Unidad": [unidad_junta(e) for e in rob.eslabones]})
     edit = st.data_editor(base, hide_index=True, **A_EDITOR,
@@ -1575,6 +1597,9 @@ def tab_trayectorias() -> None:
         conv = a_interno if e.es_rotacion else (lambda v: float(v))
         q0 = conv(float(edit["Empieza en"][i]))
         qf = conv(float(edit["Termina en"][i]))
+        if not (e.qmin <= q0 <= e.qmax and e.qmin <= qf <= e.qmax):
+            st.error(f"El eje {i + 1} tiene una postura fuera de sus límites mecánicos.", icon="⚠️")
+            return
         if perfil.startswith("Polinomio cúbico"):
             funcs.append(cubica(q0, qf, 0.0, 0.0, tf))
         elif perfil.startswith("Polinomio quíntico"):
@@ -1764,6 +1789,46 @@ def _df_masas(rob: Robot) -> pd.DataFrame:
         "inercia del motor": [round(e.inercia_motor, 6) for e in rob.eslabones]})
 
 
+def _datos_robot(rob: Robot) -> dict:
+    return {"nombre": rob.nombre, "gravedad": np.asarray(rob.gravedad).tolist(),
+            "herramienta": None if rob.herramienta is None else np.asarray(rob.herramienta).tolist(),
+            "eslabones": [{"tipo": e.tipo, "theta": e.theta, "d": e.d, "a": e.a, "alpha": e.alpha,
+                           "qmin": e.qmin, "qmax": e.qmax, "masa": e.masa,
+                           "centro_masa": np.asarray(e.centro_masa).tolist(),
+                           "inercia": np.asarray(e.inercia).tolist(),
+                           "friccion_viscosa": e.friccion_viscosa,
+                           "friccion_seca": e.friccion_seca,
+                           "inercia_motor": e.inercia_motor} for e in rob.eslabones]}
+
+
+def _robot_desde_datos(datos: dict) -> Robot:
+    if not isinstance(datos, dict):
+        raise ValueError("El archivo debe contener un objeto JSON.")
+    eslabones = datos.get("eslabones")
+    if not isinstance(eslabones, list) or not eslabones or len(eslabones) > 50:
+        raise ValueError("El archivo debe contener entre 1 y 50 eslabones.")
+    try:
+        robot = Robot(
+            str(datos.get("nombre", "Mi robot")),
+            [Eslabon(tipo=e["tipo"], theta=float(e["theta"]), d=float(e["d"]), a=float(e["a"]),
+                     alpha=float(e["alpha"]), qmin=float(e["qmin"]), qmax=float(e["qmax"]),
+                     masa=float(e.get("masa", 0.0)),
+                     centro_masa=np.array(e.get("centro_masa", [0, 0, 0]), float),
+                     inercia=np.array(e.get("inercia", np.zeros((3, 3))), float),
+                     friccion_viscosa=float(e.get("friccion_viscosa", 0.0)),
+                     friccion_seca=float(e.get("friccion_seca", 0.0)),
+                     inercia_motor=float(e.get("inercia_motor", 0.0))) for e in eslabones],
+            gravedad=np.array(datos.get("gravedad", [0, 0, -9.81]), float),
+            herramienta=None if datos.get("herramienta") is None
+            else np.array(datos["herramienta"], float))
+    except (KeyError, TypeError, ValueError, OverflowError) as err:
+        raise ValueError("El archivo contiene datos con formato incorrecto.") from err
+    errores = robot.validar()
+    if errores:
+        raise ValueError("\n".join(errores))
+    return robot
+
+
 def _aplicar(dh_df: pd.DataFrame, masas_df: pd.DataFrame, grav: np.ndarray) -> bool:
     """Reconstruye el robot con lo que quedó en las tablas. Devuelve True si algo cambió."""
     rob: Robot = ss().robot
@@ -1838,45 +1903,36 @@ def tab_editar() -> None:
                "Para un robot que se ve en 3D, en −z.")
 
     if st.button("Aplicar los cambios", type="primary"):
-        _aplicar(dh_df, masas_df, grav)
-        ss().version += 1
-        st.rerun()
+        try:
+            _aplicar(dh_df, masas_df, grav)
+        except ValueError as err:
+            st.error(f"No se pueden aplicar los cambios:\n{err}", icon="⚠️")
+        else:
+            ss().version += 1
+            st.rerun()
 
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
-        datos = {"nombre": rob.nombre, "gravedad": np.asarray(rob.gravedad).tolist(),
-                 "eslabones": [{"tipo": e.tipo, "theta": e.theta, "d": e.d, "a": e.a, "alpha": e.alpha,
-                                "qmin": e.qmin, "qmax": e.qmax, "masa": e.masa,
-                                "centro_masa": np.asarray(e.centro_masa).tolist(),
-                                "inercia": np.asarray(e.inercia).tolist(),
-                                "friccion_viscosa": e.friccion_viscosa,
-                                "friccion_seca": e.friccion_seca,
-                                "inercia_motor": e.inercia_motor} for e in rob.eslabones]}
+        datos = _datos_robot(rob)
         st.download_button("Guardar mi robot en un archivo", json.dumps(datos, indent=2),
                            file_name="mi_robot.json", mime="application/json",
                            **A_DESCARGA)
     with c2:
         subido = st.file_uploader("Abrir un robot guardado", type="json")
         if subido is not None:
-            try:
-                d = json.loads(subido.getvalue().decode("utf-8"))
-                ss().robot = Robot(d.get("nombre", "Mi robot"),
-                                   [Eslabon(tipo=e["tipo"], theta=e["theta"], d=e["d"], a=e["a"],
-                                            alpha=e["alpha"], qmin=e["qmin"], qmax=e["qmax"],
-                                            masa=e.get("masa", 0.0),
-                                            centro_masa=np.array(e.get("centro_masa", [0, 0, 0]), float),
-                                            inercia=np.array(e.get("inercia", np.zeros((3, 3))), float),
-                                            friccion_viscosa=e.get("friccion_viscosa", 0.0),
-                                            friccion_seca=e.get("friccion_seca", 0.0),
-                                            inercia_motor=e.get("inercia_motor", 0.0))
-                                    for e in d["eslabones"]],
-                                   gravedad=np.array(d.get("gravedad", [0, 0, -9.81]), float))
-                ss().nombre = d.get("nombre", "Mi robot")
-                poner_q(np.zeros(len(d["eslabones"])))
-                st.success("Robot cargado.", icon="✅")
-            except Exception as err:                                   # noqa: BLE001
-                st.error(f"No se pudo leer el archivo: {err}", icon="⚠️")
+            contenido = subido.getvalue()
+            identificador = hashlib.sha256(contenido).hexdigest()
+            if ss().get("archivo_robot_cargado") != identificador:
+                try:
+                    robot_cargado = _robot_desde_datos(json.loads(contenido.decode("utf-8")))
+                    ss().robot = robot_cargado
+                    ss().nombre = robot_cargado.nombre
+                    ss().archivo_robot_cargado = identificador
+                    poner_q(np.zeros(robot_cargado.n))
+                    st.success("Robot cargado.", icon="✅")
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as err:
+                    st.error(f"No se pudo leer el archivo: {err}", icon="⚠️")
 
     with st.expander("Herramienta montada en el extremo (una pinza, un sensor…)"):
         st.caption("Dónde queda la punta de la herramienta respecto al último marco del robot. "
