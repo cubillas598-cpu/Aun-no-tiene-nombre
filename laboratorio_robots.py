@@ -52,6 +52,9 @@ from domain.inverse import inversa_2R, inversa_3R_plano, inversa_antropomorfico
 from domain.trajectories import cubica, quintica, trapezoidal
 from domain.inertia import (FORMAS, inercia_cilindro, inercia_esfera, inercia_prisma,
                              inercia_varilla, steiner)
+from ui.state import (a_interno, a_pantalla, iniciar_estado, latex_matriz, n_fmt, ss,
+                      uni, unidad_junta, unidad_par, _cargar)
+from ui.figures import figura_curvas, figura_robot
 
 
 # ==============================================================================
@@ -64,7 +67,6 @@ import json
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 # --- compatibilidad entre versiones de Streamlit -----------------------------
 # Streamlit cambio la forma de decir "ocupa todo el ancho": antes era
@@ -195,68 +197,6 @@ DIAGRAMA_DH = """
 """
 
 
-# --------------------------------------------------------------- utilidades UI
-def ss():
-    return st.session_state
-
-
-def _cargar(nombre: str) -> None:
-    robot, q0 = catalogo()[nombre]()
-    ss().robot = robot
-    ss().q = np.asarray(q0, float)
-    ss().nombre = nombre
-    ss()._elegido = nombre
-    ss().version = ss().get("version", 0) + 1
-    ss().nube = None
-
-
-def iniciar_estado() -> None:
-    if "robot" not in ss():
-        ss().unidad_ang = "grados"
-        ss().ver_explicaciones = True
-        ss().grados = True
-        ss().explicar = True
-        _cargar("Brazo antropomorfico (3 ejes)")
-    # los controles guardan su valor con una clave propia: asi no se atoran al cambiarlos
-    ss().grados = ss().get("unidad_ang", "grados") == "grados"
-    ss().explicar = bool(ss().get("ver_explicaciones", True))
-
-
-def uni() -> str:
-    return "°" if ss().grados else "rad"
-
-
-def a_pantalla(valor: float) -> float:
-    return deg(valor) if ss().grados else valor
-
-
-def a_interno(valor: float) -> float:
-    return rad(valor) if ss().grados else valor
-
-
-def unidad_junta(e: Eslabon) -> str:
-    return uni() if e.es_rotacion else "m"
-
-
-def unidad_par(e: Eslabon) -> str:
-    return "N·m" if e.es_rotacion else "N"
-
-
-def n_fmt(x: float, dec: int = 3) -> str:
-    x = float(x)
-    if abs(x) < 5e-7:
-        x = 0.0
-    if x != 0 and (abs(x) >= 1e5 or abs(x) < 1e-3):
-        return f"{x:.2e}"
-    return f"{x:.{dec}f}"
-
-
-def latex_matriz(M: np.ndarray, nombre: str = "", dec: int = 3) -> str:
-    cuerpo = r" \\ ".join(" & ".join(n_fmt(v, dec) for v in fila) for fila in np.atleast_2d(M))
-    izq = f"{nombre} = " if nombre else ""
-    return izq + r"\begin{bmatrix}" + cuerpo + r"\end{bmatrix}"
-
-
 def dice(texto: str) -> None:
     st.markdown(f'<div class="dice">{texto}</div>', unsafe_allow_html=True)
 
@@ -274,116 +214,6 @@ def encabezado(pregunta: str, respuesta: str = "") -> None:
 
 def tabla(df: pd.DataFrame) -> None:
     st.dataframe(df, hide_index=True, **A_TABLA)
-
-
-# ------------------------------------------------------------- robot en 3D
-def figura_robot(robot: Robot, q: Sequence[float], nube: np.ndarray | None = None,
-                 altura: int = 620) -> go.Figure:
-    Ts = robot.cadena(q)
-    puntos = np.array([T[:3, 3] for T in Ts])
-    alcance = max(0.3, float(np.max(np.abs(puntos))) * 1.05,
-                  max((abs(e.a) + abs(e.d)) for e in robot.eslabones))
-    fig = go.Figure()
-
-    if nube is not None and len(nube):
-        fig.add_trace(go.Scatter3d(x=nube[:, 0], y=nube[:, 1], z=nube[:, 2], mode="markers",
-                                   name="espacio de trabajo", hoverinfo="skip",
-                                   marker=dict(size=2, color=AMBAR, opacity=0.16)))
-
-    g = alcance
-    paso = max(g / 5.0, 0.05)
-    v = -g
-    lx, ly, lz = [], [], []
-
-    while v <= g + 1e-9:
-        lx += [v, v, None, -g, g, None]
-        ly += [-g, g, None, v, v, None]
-        lz += [0, 0, None, 0, 0, None]
-        v += paso
-    fig.add_trace(go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", hoverinfo="skip",
-                                   marker=dict(size=1.7, color=MARINO, opacity=0.12),
-                                   name="hasta donde alcanza"))
-
-    # eslabones, siguiendo la construccion DH: primero d sobre z viejo, luego a sobre x nuevo
-    bx, by, bz = [], [], []
-    for i, e in enumerate(robot.eslabones):
-        o = Ts[i][:3, 3]
-        z = Ts[i][:3, 2]
-        dv = e.d + (0.0 if e.es_rotacion else float(q[i]))
-        medio = o + z * dv
-        fin = Ts[i + 1][:3, 3]
-        bx += [o[0], medio[0], fin[0], None]
-        by += [o[1], medio[1], fin[1], None]
-        bz += [o[2], medio[2], fin[2], None]
-    fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", hoverinfo="skip",
-                               line=dict(color="#2A3138", width=9), showlegend=False))
-
-    # marcadores de articulacion sobre su eje de giro o de deslizamiento
-    for tipo, color, etiqueta in (("R", MARINO, "articulación que gira"), ("P", AMBAR, "articulación que desliza")):
-        jx, jy, jz = [], [], []
-        for i, e in enumerate(robot.eslabones):
-            if e.tipo != tipo:
-                continue
-            o, z = Ts[i][:3, 3], Ts[i][:3, 2]
-            h = alcance * 0.075
-            jx += [o[0] - z[0] * h, o[0] + z[0] * h, None]
-            jy += [o[1] - z[1] * h, o[1] + z[1] * h, None]
-            jz += [o[2] - z[2] * h, o[2] + z[2] * h, None]
-        if jx:
-            fig.add_trace(go.Scatter3d(x=jx, y=jy, z=jz, mode="lines", name=etiqueta,
-                                       line=dict(color=color, width=16), hoverinfo="skip"))
-
-    # marcos de referencia de cada eslabon
-    for k, (color, nombre) in enumerate(((COLOR_X, "eje x"), (COLOR_Y, "eje y"), (COLOR_Z, "eje z"))):
-        ex, ey, ez = [], [], []
-        for j, T in enumerate(Ts):
-            largo = alcance * (0.2 if j in (0, len(Ts) - 1) else 0.11)
-            o, u = T[:3, 3], T[:3, k]
-            ex += [o[0], o[0] + u[0] * largo, None]
-            ey += [o[1], o[1] + u[1] * largo, None]
-            ez += [o[2], o[2] + u[2] * largo, None]
-        fig.add_trace(go.Scatter3d(x=ex, y=ey, z=ez, mode="lines", name=nombre,
-                                   line=dict(color=color, width=4), hoverinfo="skip"))
-
-    p = puntos[-1]
-    fig.add_trace(go.Scatter3d(x=[p[0]], y=[p[1]], z=[p[2]], mode="markers", name="la mano",
-                               marker=dict(size=7, color=TINTA),
-                               hovertemplate="mano<br>x %{x:.3f}<br>y %{y:.3f}<br>z %{z:.3f}<extra></extra>"))
-
-    ejes = dict(showbackground=False, showgrid=False, zeroline=False, showticklabels=True,
-                title="", tickfont=dict(size=9, color=SUAVE), color=SUAVE)
-    fig.update_layout(
-        height=altura, margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="rgba(0,0,0,0)", showlegend=True,
-        legend=dict(orientation="h", y=-0.02, x=0, font=dict(size=10, color=SUAVE),
-                    bgcolor="rgba(0,0,0,0)"),
-        scene=dict(xaxis=ejes, yaxis=ejes, zaxis=ejes, aspectmode="data",
-                   camera=dict(eye=dict(x=1.5, y=1.5, z=1.1)), dragmode="orbit"),
-    )
-    return fig
-
-
-def figura_curvas(datos: list[tuple[str, np.ndarray, np.ndarray]], robot: Robot) -> go.Figure:
-    fig = make_subplots(rows=len(datos), cols=1, shared_xaxes=True, vertical_spacing=0.07,
-                        subplot_titles=[d[0] for d in datos])
-    for fila, (_, x, Y) in enumerate(datos, start=1):
-        for i in range(robot.n):
-            fig.add_trace(go.Scatter(x=x, y=Y[:, i], mode="lines", name=f"eje {i + 1}",
-                                     legendgroup=f"eje{i}", showlegend=(fila == 1),
-                                     line=dict(color=PALETA[i % len(PALETA)], width=2.2)),
-                          row=fila, col=1)
-    fig.update_xaxes(title_text="tiempo [s]", row=len(datos), col=1)
-    fig.update_layout(height=190 * len(datos), margin=dict(l=10, r=10, t=30, b=10),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#FFFFFF",
-                      font=dict(family="Inter", size=11, color=TINTA),
-                      legend=dict(orientation="h", y=1.08, x=0, font=dict(size=10)),
-                      hovermode="x unified")
-    fig.update_xaxes(gridcolor="#EDEFEB", zerolinecolor="#DDE0DA")
-    fig.update_yaxes(gridcolor="#EDEFEB", zerolinecolor="#DDE0DA")
-    for a in fig.layout.annotations:
-        a.font.size = 12
-        a.font.family = "Space Grotesk"
-    return fig
 
 
 def poner_q(q_nuevo: Sequence[float]) -> None:
