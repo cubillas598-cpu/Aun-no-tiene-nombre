@@ -63,6 +63,7 @@ from ui.tabs.rotaciones import tab_rotaciones as tab_rotaciones_modular
 from ui.tabs.jacobiano import tab_jacobiano as tab_jacobiano_modular
 from ui.tabs.dinamica import tab_dinamica as tab_dinamica_modular
 from ui.tabs.trayectorias import tab_trayectorias as tab_trayectorias_modular
+from ui.tabs.editar import tab_editar as tab_editar_modular
 
 
 # ==============================================================================
@@ -434,88 +435,16 @@ def _aplicar(dh_df: pd.DataFrame, masas_df: pd.DataFrame, grav: np.ndarray) -> b
     return antes != despues
 
 
-def tab_editar() -> None:
-    rob: Robot = ss().robot
-    encabezado("Editar mi robot",
-               "Aquí capturas el robot de tu tarea. Puedes agregar o borrar renglones: "
-               "cada renglón es una articulación.")
-    st.warning("Esta herramienta es una simulación educativa. Antes de conectar hardware real, "
-               "verifica límites, unidades, parada de emergencia y supervisión humana.", icon="⚠️")
-    pista("Si no sabes de dónde salen estos cuatro números, vuelve a la pestaña <b>Empezar aquí</b>: "
-          "ahí está el dibujo que explica θ, d, a y α.")
-
-    st.markdown("**Tabla de Denavit–Hartenberg**")
-    st.caption("En una articulación que gira, θ es solo el desplazamiento fijo que se le suma a la "
-               "variable. En una que desliza, ese papel lo hace d.")
-    dh_df = st.data_editor(
-        _df_dh(rob), num_rows="dynamic", hide_index=True, **A_EDITOR,
-        key=f"ed_dh_{ss().version}_{int(ss().grados)}",
-        column_config={"Tipo": st.column_config.SelectboxColumn(options=["gira", "desliza"], required=True)})
-
-    st.markdown("**Masas e inercias** (solo hacen falta para la pestaña de motores)")
-    st.caption("El centro de masa va medido desde el marco del propio eslabón, y el tensor de inercia "
-               "está tomado en el centro de masa.")
-    masas_df = st.data_editor(_df_masas(rob), num_rows="dynamic", hide_index=True,
-                              key=f"ed_m_{ss().version}", **A_EDITOR)
-
-    st.markdown("**¿Hacia dónde jala la gravedad?**")
-    grav = vector_entrada(["gx [m/s²]", "gy [m/s²]", "gz [m/s²]"], rob.gravedad, "grav", 0.5)
-    st.caption("Para un brazo de pie que trabaja en un plano vertical, la gravedad va en −y. "
-               "Para un robot que se ve en 3D, en −z.")
-
-    if st.button("Aplicar los cambios", type="primary"):
-        try:
-            _aplicar(dh_df, masas_df, grav)
-        except ValueError as err:
-            st.error(f"No se pueden aplicar los cambios:\n{err}", icon="⚠️")
-        else:
-            ss().version += 1
-            st.rerun()
-
-    st.divider()
-    c1, c2 = st.columns(2)
-    with c1:
-        datos = _datos_robot(rob)
-        st.download_button("Guardar mi robot en un archivo", json.dumps(datos, indent=2),
-                           file_name="mi_robot.json", mime="application/json",
-                           **A_DESCARGA)
-    with c2:
-        subido = st.file_uploader("Abrir un robot guardado", type="json")
-        if subido is not None:
-            contenido = subido.getvalue()
-            identificador = hashlib.sha256(contenido).hexdigest()
-            if ss().get("archivo_robot_cargado") != identificador:
-                try:
-                    robot_cargado = _robot_desde_datos(json.loads(contenido.decode("utf-8")))
-                    ss().robot = robot_cargado
-                    ss().nombre = robot_cargado.nombre
-                    ss().archivo_robot_cargado = identificador
-                    poner_q(np.zeros(robot_cargado.n))
-                    st.success("Robot cargado.", icon="✅")
-                except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as err:
-                    st.error(f"No se pudo leer el archivo: {err}", icon="⚠️")
-
-    with st.expander("Herramienta montada en el extremo (una pinza, un sensor…)"):
-        st.caption("Dónde queda la punta de la herramienta respecto al último marco del robot. "
-                   "Se incluye en todos los cálculos.")
-        v = vector_entrada(["x [m]", "y [m]", "z [m]", f"roll [{uni()}]",
-                            f"pitch [{uni()}]", f"yaw [{uni()}]"], [0.0] * 6, "her", 0.01)
-        if np.any(np.abs(v) > 1e-12):
-            rob.herramienta = homogenea(R_desde_rpy(*[a_interno(x) for x in v[3:]]), v[:3])
-            st.success("Herramienta activa: ya está incluida en la posición de la mano.", icon="✅")
-        else:
-            rob.herramienta = None
+# La edición vive en ui.tabs.editar; este archivo solo coordina la aplicación.
 
 
-# ================================== MAIN ==================================
 def main() -> None:
     st.set_page_config(page_title="Laboratorio de robots", page_icon="🦾",
                        layout="wide", initial_sidebar_state="expanded")
     st.markdown(CSS, unsafe_allow_html=True)
     if _VERSION < VERSION_MINIMA:
         st.error(f"Tu Streamlit es la versión {st.__version__} y este programa necesita al menos la "
-                 f"{'.'.join(map(str, VERSION_MINIMA))}. Ciérralo, escribe en la terminal "
-                 f"`pip install --upgrade streamlit` y vuelve a abrirlo.", icon="⚠️")
+                 f"{'.'.join(map(str, VERSION_MINIMA))}.", icon="⚠️")
         st.stop()
     iniciar_estado()
     barra_lateral()
@@ -539,16 +468,7 @@ def main() -> None:
     with pestañas[6]:
         tab_rotaciones_modular(vector_entrada)
     with pestañas[7]:
-        tab_editar()
-
-
-def _dentro_de_streamlit() -> bool:
-    """¿Nos esta ejecutando Streamlit, o alguien corrio 'python laboratorio_robots.py'?"""
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        return get_script_run_ctx() is not None
-    except Exception:                                                  # noqa: BLE001
-        return False
+        tab_editar_modular(vector_entrada, A_EDITOR, A_DESCARGA, poner_q)
 
 
 def revisar() -> None:
