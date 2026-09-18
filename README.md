@@ -2,6 +2,10 @@
 
 Aplicacion educativa para estudiar cinematica y dinamica de robots mediante una interfaz interactiva.
 
+El nucleo inicial de operaciones de rotacion esta separado en `domain/rotations.py` para poder
+probarlo sin depender de la interfaz Streamlit. La aplicacion principal sigue siendo
+`laboratorio_robots.py` mientras se completa la migracion gradual del resto del dominio.
+
 ## Instalacion
 
 ```powershell
