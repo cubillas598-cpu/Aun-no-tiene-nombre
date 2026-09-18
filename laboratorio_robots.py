@@ -227,6 +227,32 @@ class Robot:
     def limites(self) -> np.ndarray:
         return np.array([[e.qmin, e.qmax] for e in self.eslabones], float)
 
+    def validar(self) -> list[str]:
+        """Devuelve errores de configuracion antes de usar el robot en calculos."""
+        errores = []
+        gravedad = np.asarray(self.gravedad, float)
+        if gravedad.shape != (3,) or not np.all(np.isfinite(gravedad)):
+            errores.append("La gravedad debe tener tres componentes finitas.")
+        for i, eslabon in enumerate(self.eslabones, start=1):
+            prefijo = f"Eslabon {i}: "
+            if eslabon.tipo not in ("R", "P"):
+                errores.append(prefijo + "el tipo debe ser R o P.")
+            if not np.isfinite([eslabon.qmin, eslabon.qmax]).all() or eslabon.qmin >= eslabon.qmax:
+                errores.append(prefijo + "q minima debe ser menor que q maxima.")
+            valores = [eslabon.theta, eslabon.d, eslabon.a, eslabon.alpha, eslabon.masa,
+                       eslabon.friccion_viscosa, eslabon.friccion_seca, eslabon.inercia_motor]
+            if not np.isfinite(valores).all():
+                errores.append(prefijo + "contiene parametros no finitos.")
+            if eslabon.masa < 0:
+                errores.append(prefijo + "la masa no puede ser negativa.")
+            centro = np.asarray(eslabon.centro_masa, float)
+            inercia = np.asarray(eslabon.inercia, float)
+            if centro.shape != (3,) or not np.all(np.isfinite(centro)):
+                errores.append(prefijo + "el centro de masa debe tener tres valores finitos.")
+            if inercia.shape != (3, 3) or not np.all(np.isfinite(inercia)):
+                errores.append(prefijo + "la inercia debe ser una matriz 3x3 finita.")
+        return errores
+
     def q_inicial(self) -> np.ndarray:
         return np.zeros(self.n)
 
@@ -1763,6 +1789,10 @@ def _aplicar(dh_df: pd.DataFrame, masas_df: pd.DataFrame, grav: np.ndarray) -> b
             inercia_motor=float(m["inercia del motor"]) if m is not None else 0.0))
     if not nuevos:
         return False
+    candidato = Robot(rob.nombre, nuevos, np.asarray(grav, float), rob.herramienta)
+    errores = candidato.validar()
+    if errores:
+        raise ValueError("\n".join(errores))
     antes = (_df_dh(rob).to_numpy().tolist(), _df_masas(rob).to_numpy().tolist(),
              np.asarray(rob.gravedad).tolist())
     rob.eslabones = nuevos
@@ -1783,6 +1813,8 @@ def tab_editar() -> None:
     encabezado("Editar mi robot",
                "Aquí capturas el robot de tu tarea. Puedes agregar o borrar renglones: "
                "cada renglón es una articulación.")
+    st.warning("Esta herramienta es una simulación educativa. Antes de conectar hardware real, "
+               "verifica límites, unidades, parada de emergencia y supervisión humana.", icon="⚠️")
     pista("Si no sabes de dónde salen estos cuatro números, vuelve a la pestaña <b>Empezar aquí</b>: "
           "ahí está el dibujo que explica θ, d, a y α.")
 
