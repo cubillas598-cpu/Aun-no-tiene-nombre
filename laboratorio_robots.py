@@ -370,6 +370,10 @@ class Robot:
         return np.array([self.posicion(qi) for qi in Q])
 
 
+# El dominio usa el modelo desacoplado; este import mantiene estable la API de la app.
+from domain.robot import Eslabon, Robot, dh
+
+
 # ---------------------------------------------- cinematica inversa con formulas
 def inversa_2R(a1: float, a2: float, x: float, y: float) -> list[dict]:
     """Brazo plano de dos eslabones. Da las dos soluciones: codo arriba y codo abajo."""

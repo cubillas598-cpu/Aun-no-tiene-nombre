@@ -2,11 +2,13 @@ import numpy as np
 import pytest
 
 import laboratorio_robots as app
+from domain.robot import Robot as DomainRobot
 from domain.rotations import (R_desde_cuaternion, R_desde_rpy, cuaternion_desde_R,
                                homogenea, inversa_homogenea, rad, rpy_desde_R)
 
 
 def test_validacion_rechaza_q_incompleto():
+    assert app.Robot is DomainRobot
     robot, q0 = app.catalogo()["Brazo plano de 2 eslabones"]()
     assert robot.validar() == []
     assert robot.posicion(q0).shape == (3,)
